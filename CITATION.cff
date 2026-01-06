@@ -6,4 +6,5 @@ authors:
   orcid: "https://orcid.org/0009-0003-2745-060X"
 title: "Exploring Horizontal Discretizations of the Primitive Equations on Triangular and Hexagonal Grids: Fourier Symbols, System Matrix, and Instabilities"
 version: 0.1.0
+doi: 10.5281/zenodo.18165098
 url: "https://github.com/smaasz/TriEadyInstabilities"
