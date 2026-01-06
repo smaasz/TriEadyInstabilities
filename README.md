@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/1128883326.svg)](https://doi.org/10.5281/zenodo.18165097)
 # Exploring Horizontal Discretizations of the Primitive Equations on Triangular and Hexagonal Grids
 Data and notebook to explore Fourier symbols and instabilities of the linearized primitive equations in the Eady configuration discretized on triangular and hexagonal grids.
 
