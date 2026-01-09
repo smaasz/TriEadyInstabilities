@@ -24,6 +24,7 @@ begin
 	import DrWatson: @unpack, @dict, savename, wload
 	import HTTP
 	using HypertextLiteral: @htl, @html_str
+	using LaTeXStrings
 	import Latexify
 	import LinearAlgebra: eigvals, kron!, I, Diagonal
 	import NaNMath
@@ -169,7 +170,7 @@ md"Scheme: $(@bind hmt_scheme Select(hmt_schemes[grid_t]))"
 md"## Fourier Symols"
 
 # ╔═╡ 4dcd3ed3-6fa5-4f54-a9fa-2f109095292f
-@variables f₀ g N² Ri M² β θU 𝕂ᵘ 𝕂ᵇ H Nz k l a h z α₁ α₂ α₃
+@variables f₀ g N² Ri M² β θU 𝕂ᵘ 𝕂ᵇ H Nz k l a h z α₁ α₂ α₃ K̃
 
 # ╔═╡ 97c50791-1c10-452b-8f7c-a2e70f71872b
 md"""
@@ -197,6 +198,28 @@ md"""__Small wavenumber approximation__: $(@bind doapprox PlutoUI.CheckBox(defau
 
 # ╔═╡ f7cec82a-4606-4463-8ce3-25db7683df02
 md"""__Phase substitutions__: $(@bind dophasesubs PlutoUI.CheckBox(default=false))"""
+
+# ╔═╡ ead8619e-2c7c-4f06-9657-4cb5a0d5607e
+function downloadsymbols(config)
+	RuntimeGeneratedFunctions.init(@__MODULE__)
+	path   = joinpath(
+		"https://github.com/smaasz/TriEadyInstabilities/raw/refs/heads/main/data/symbols/", 
+		savename(config, "jld2")
+	)
+	resp_symbols = Downloads.download(path)
+	data   = wload(resp_symbols)
+	
+	@unpack fsyms, = data
+	for (name, fsym) in pairs(fsyms) # mistake in symbols
+		fsyms[name] = (
+			Meta.parse(replace(string(fsym[1]), "BigFloat" => "Real")),
+			Meta.parse(replace(string(fsym[2]), "BigFloat" => "Real"))
+		)
+	end
+	fsyms_generated = Dict([
+		name => (@RuntimeGeneratedFunction(fsym[1]), @RuntimeGeneratedFunction(fsym[2])) for (name, fsym) in pairs(fsyms)
+	])
+end
 
 # ╔═╡ 55e52182-cbc1-4af3-9141-c02580e77195
 md"""
@@ -316,7 +339,9 @@ function simfrac(f)
 end
 
 # ╔═╡ c8446c65-9992-40e9-be38-7fb6ec9b0f62
-function displayfs(fs, tvarout, tvarin)
+function displayfs(fs, tvarout, tvarin; grid_t)
+	db = nlattices(scalarloc(grid_t))
+	du = nlattices(vectorloc(grid_t))
 	s = if tvarout == :vector && tvarin == :scalar
 		if vectorloc(grid_t) == :edge
 			fs
@@ -397,6 +422,30 @@ end
 # ╔═╡ daa9e2bf-a1eb-4628-a974-024c7a0d61a6
 phases = phasesubs(a,h,k,l);
 
+# ╔═╡ 1dab0806-50b2-4513-a999-3acca92330de
+function evalsymbols(symbols, params...; doapprox=false, dophasesubs=false)
+	fsymbols = Dict{Symbol, Array{Complex{Num}}}([
+	    name => sym[1](params...) for (name, sym) in pairs(symbols) 
+	])
+	for (name, fsymbol) in pairs(fsymbols)
+		fsymbols[name] = try # issue in Symbolics
+			simplify.(fsymbol; expand=true, rewriter=simfrac)
+		catch
+			simplify.(fsymbol; expand=true, simplify_fractions=false)
+		end
+	end
+	if doapprox
+		for (name, fsymbol) in pairs(fsymbols)
+			fsymbols[name] = smallkapprox(fsymbol)
+		end
+	elseif dophasesubs
+		for (name, fsymbol) in pairs(fsymbols)
+			fsymbols[name] = subphases(fsymbol, phases)
+		end
+	end
+	fsymbols
+end
+
 # ╔═╡ 7891b7da-ba36-417d-bdde-c84187463636
 md"""
 ## Instability Analysis
@@ -427,7 +476,7 @@ colordf = let
 	hmt_schemes = vcat([first.(hmt_schemes[grid_t]) for grid_t in [:HexC, :TriA, :TriB, :TriC]]...)
 	push!(hmt_schemes)
 	DataFrame("grid_t" => String.(grid_ts), "hmt_scheme" => String.(hmt_schemes), "color" => colors[1:length(grid_ts)])
-end
+end;
 
 # ╔═╡ 7499fa65-cb31-45d1-aa43-d248dc1cd066
 md"## Assembling the system matrix"
@@ -705,8 +754,48 @@ function systemmat(grid_t::Union{Val{:TriC}, Val{:HexC}}, fsyms, b, k, l; g, f�
 end
 
 
+# ╔═╡ 8f1481d4-c99c-487b-8f60-6423b1a252f3
+md"## Dispersion Relations"
+
 # ╔═╡ 84865a4a-9752-44e4-9746-41674be387c7
 html"""<hr>"""
+
+# ╔═╡ 94e089d0-ea7c-4543-9aff-581e0d5160ab
+function selectschemes(grid_t, scheme)
+	PlutoUI.combine() do Child
+		md""" $grid_t: $scheme: $(
+		Child("doshow", CheckBox(default=false))
+		) linestyle: $(
+		Child("ls", PlutoUI.Select([:solid, :dash, :dot]))
+		)"""
+	end
+end
+
+# ╔═╡ eccc647d-5e1e-49a6-beb4-d3181e356baf
+function selectschemes(grid_t)
+	PlutoUI.combine() do Child
+		inputs = [
+			Child(scheme, selectschemes(grid_t, scheme))
+			for scheme in string.(first.(hmt_schemes[grid_t]))
+		]
+		md"""
+		$(inputs)
+		"""
+	end
+end
+
+# ╔═╡ f1a00556-22a5-4e4a-9962-0744ffe6e747
+function selectschemes()
+	PlutoUI.combine() do Child
+		inputs = [
+			Child(grid_t, selectschemes(grid_t))
+			for grid_t in [:TriA, :TriB, :TriC, :HexC]
+		]
+		md"""
+		$(inputs)
+		"""
+	end
+end
 
 # ╔═╡ 2c658919-9be3-43f5-934b-9dd11a415eec
 html"""<style>.dont-panic{ display: none }</style>"""
@@ -727,7 +816,7 @@ begin
             	position:fixed;
             	right: 1rem;
             	top: $(top)px;
-            	width: 400px;
+            	width: 320px;
             	padding: 10px;
             	border: 3px solid rgba(0, 0, 0, 0.15);
             	border-radius: 10px;
@@ -735,7 +824,7 @@ begin
             	/* That is, viewport minus top minus Live Docs */
             	max-height: calc(100vh - 5rem - 56px);
             	overflow: auto;
-            	z-index: 40;
+            	z-index: 30;
             	background-color: var(--main-bg-color);
             	transition: transform 300ms cubic-bezier(0.18, 0.89, 0.45, 1.12);
 
@@ -758,6 +847,9 @@ begin
     floataside(stuff; kwargs...) = floataside(md"""$(stuff)"""; kwargs...)
 end;
 
+# ╔═╡ 018bb089-fb02-4b2b-a40d-a478669b2d71
+floataside(@bind selectedschemes selectschemes(); top=100)
+
 # ╔═╡ 2474940b-0b25-44fe-995e-7e6e1dc94536
 begin
 	floataside(md"""
@@ -779,115 +871,134 @@ end
 
 # ╔═╡ 41f3ff09-cd17-4691-bd7a-dce52f1a7e97
 fsyms = !isdownload ? Missing : let
-	RuntimeGeneratedFunctions.init(@__MODULE__)
 	config = @dict(grid_t, hmt_scheme, hst_scheme=shst_scheme, dissip_scheme=:biharmonic)
-	path   = joinpath(
-		"https://github.com/smaasz/TriEadyInstabilities/raw/refs/heads/main/data/symbols/", 
-		savename(config, "jld2")
-	)
-	resp_symbols = Downloads.download(path)
-	data   = wload(resp_symbols)
-	
-	@unpack fsyms, = data
-	for (name, fsym) in pairs(fsyms) # mistake in symbols
-		fsyms[name] = (
-			Meta.parse(replace(string(fsym[1]), "BigFloat" => "Real")),
-			Meta.parse(replace(string(fsym[2]), "BigFloat" => "Real"))
-		)
-	end
-	fsyms_generated = Dict([
-		name => (@RuntimeGeneratedFunction(fsym[1]), @RuntimeGeneratedFunction(fsym[2])) for (name, fsym) in pairs(fsyms)
-	])
+	downloadsymbols(config)
 end
 
 # ╔═╡ c1570e2e-e7c7-4cce-80a4-bd0c7efaa0c2
 fsymbols = !isdownload ? Missing : let
 	params = (z, f₀, N², Ri, θU, β, k, l, a, h)
-	fsymbols = Dict{Symbol, Array{Complex{Num}}}([
-	    name => fsym[1](params...) for (name, fsym) in pairs(fsyms) 
-	])
-	for (name, fsymbol) in pairs(fsymbols)
-		fsymbols[name] = try # issue in Symbolics
-			simplify.(fsymbol; expand=true, rewriter=simfrac)
-		catch
-			simplify.(fsymbol; expand=true, simplify_fractions=false)
-		end
-	end
-	if doapprox
-		for (name, fsymbol) in pairs(fsymbols)
-			fsymbols[name] = smallkapprox(fsymbol)
-		end
-	elseif dophasesubs
-		for (name, fsymbol) in pairs(fsymbols)
-			fsymbols[name] = subphases(fsymbol, phases)
-		end
-	end
-	fsymbols
+	evalsymbols(fsyms, params...; doapprox, dophasesubs)
 end;
 
 # ╔═╡ 456e8985-3197-47c6-8658-e7f7bb8253e5
 let
-	fs = displayfs(fsymbols[:Gx], :vector, :vector)
+	fs = displayfs(fsymbols[:Gx], :vector, :vector; grid_t)
 end
 
 # ╔═╡ 33004562-7af3-4fb8-98d2-f2aed9d1203e
 let
-	fs = displayfs(fsymbols[:Gy], :vector, :vector)
+	fs = displayfs(fsymbols[:Gy], :vector, :vector; grid_t)
 end
 
 # ╔═╡ a0341bc4-7240-4d8c-a6c4-9929241851de
 let
-	fs = displayfs(fsymbols[:A⁽ˣ⁾], :vector, :scalar)
+	fs = displayfs(fsymbols[:A⁽ˣ⁾], :vector, :scalar; grid_t)
 end
 
 # ╔═╡ 9b901c1a-b28f-4cd8-a800-d5d8b38b478e
 let
-	fs = displayfs(fsymbols[:A⁽ʸ⁾], :vector, :scalar)
+	fs = displayfs(fsymbols[:A⁽ʸ⁾], :vector, :scalar; grid_t)
 end
 
 # ╔═╡ 854b6598-20b2-4aa2-9410-112cf703d96e
 let
-	fs = displayfs(fsymbols[:M], :vector, :vector)
+	fs = displayfs(fsymbols[:M], :vector, :vector; grid_t)
 end
 
 # ╔═╡ 58ef8cec-6e7a-4491-aa00-e4516094925e
 let
-	fs = displayfs(fsymbols[:Dᵘ], :vector, :vector)
+	fs = displayfs(fsymbols[:Dᵘ], :vector, :vector; grid_t)
 end
 
 # ╔═╡ 159467de-d9aa-4718-a8e1-012a90fa93a1
 let
-	fs = displayfs(fsymbols[:G], :vector, :scalar)
+	fs = displayfs(fsymbols[:G], :vector, :scalar; grid_t)
 end
 
 # ╔═╡ a40fb713-9ed6-4ec1-8f16-928d2b9a65cd
 let
-	fs = displayfs(fsymbols[:Av⁽ˣ⁾], :scalar, :vector)
+	fs = displayfs(fsymbols[:Av⁽ˣ⁾], :scalar, :vector; grid_t)
 end
 
 # ╔═╡ 7de0eff1-04f9-4b11-a201-def19335c853
 let
-	fs = displayfs(fsymbols[:Av⁽ʸ⁾], :scalar, :vector)
+	fs = displayfs(fsymbols[:Av⁽ʸ⁾], :scalar, :vector; grid_t)
 end
 
 # ╔═╡ 51b7e139-b647-444e-bd4b-534ff7a28e78
 let
-	fs = displayfs(fsymbols[:Γx], :scalar, :scalar)
+	fs = displayfs(fsymbols[:Γx], :scalar, :scalar; grid_t)
 end
 
 # ╔═╡ 177d8297-0064-4b4f-a04e-cddf3cc30786
 let
-	fs = displayfs(fsymbols[:Γy], :scalar, :scalar)
+	fs = displayfs(fsymbols[:Γy], :scalar, :scalar; grid_t)
 end
 
 # ╔═╡ 772c653a-5ca8-4672-ae48-2086fff8c639
 let
-	fs = displayfs(fsymbols[:Dᵇ], :scalar, :scalar)
+	fs = displayfs(fsymbols[:Dᵇ], :scalar, :scalar; grid_t)
 end
 
 # ╔═╡ 007d3be0-7cc0-4aeb-b46f-6f894a4480ef
 let
-	fs = displayfs(fsymbols[:D], :scalar, :vector)
+	fs = displayfs(fsymbols[:D], :scalar, :vector; grid_t)
+end
+
+# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
+symbols = let
+	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
+	for gt in [:TriA, :TriB, :TriC, :HexC]
+		for hmt_scheme in first.(hmt_schemes[gt])
+			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
+			s  = downloadsymbols(config)
+			z   = 0.0
+			f₀  = -1e-4
+			g   = 1e9
+			N²  = 1e-6
+			Ri  = sRi
+			θU  = sθU
+			β   = sβ
+			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
+			ss = evalsymbols(s, params...)
+			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
+		end
+	end
+	symbols
+end;
+
+# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
+let
+	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
+	
+	fontfam = "DejaVu Sans"
+	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
+	
+	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
+	title!("Dispersion of Momentum Advection Operators")
+	ylabel!(L"ω / i\bar{U}K")
+	xlabel!(L"K/h^{-1}")
+	
+	for row in eachrow(symbols)
+		(; symbol, color, grid_t, hmt_scheme) = row
+		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
+		if doshow
+			fs = simplify.(symbol; expand=true)
+			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
+			b = zeros(ComplexF64, size(fs)...)
+			iωs = []
+			K̃s = 0:0.001:π
+			for K̃ in K̃s
+				ffs[2](b, K̃)
+				push!(iωs, eigvals(b, sortby=x->imag(x)))
+			end
+			iωss = transpose(stack(iωs))
+			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
+			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
+		end
+	end
+	p
 end
 
 # ╔═╡ 89277803-a204-4371-b475-8a8ff7233d60
@@ -973,8 +1084,11 @@ function plotinstabilities(df, Ri; Nz, θU, β, a, Vᵘ, Vᵇ, hst_scheme)
 	subdf = innerjoin(subdf, colordf; on=[:grid_t, :hmt_scheme])
 	for row in eachrow(subdf)
 		(; Ks, iωs, grid_t, hmt_scheme, f₀, N², color) = row
+		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
 		M²= √(N² * f₀^2 / Ri)
-		plot!(Ks./fₛ, real.(iωs) .* (sqrt(N²) / abs(M²)), label="$(String(grid_t))"* (grid_t == "TriA" ? "" : ":$(String(hmt_scheme))"), linewidth=3, linecolor=color)
+		if doshow
+			plot!(Ks./fₛ, real.(iωs) .* (sqrt(N²) / abs(M²)), label="$(String(grid_t))"* (grid_t == "TriA" ? "" : ":$(String(hmt_scheme))"), linewidth=3, linecolor=color, linestyle=ls)
+		end
 	end
 
 	(; Ks, iωs, grid_t, hmt_scheme, N², f₀) = first(subset(df, :a=>x->x.≈1e-20, :Ri=>x->x.≈Ri))
@@ -1034,6 +1148,7 @@ Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 HypertextLiteral = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NaNMath = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
@@ -1051,6 +1166,7 @@ DataFrames = "~1.8.1"
 DrWatson = "~2.19.1"
 HTTP = "~1.10.19"
 HypertextLiteral = "~0.9.5"
+LaTeXStrings = "~1.4.0"
 Latexify = "~0.16.10"
 NaNMath = "~1.1.3"
 Plots = "~1.41.3"
@@ -1066,7 +1182,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "fff7a116c365b47c0f882af9bf1ce4949cc57053"
+project_hash = "e332f86e4523419a843ee342ac384e72ac9a4f80"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
@@ -2764,7 +2880,9 @@ version = "1.13.0+0"
 # ╟─5136efea-d24b-4016-8942-581a91552796
 # ╟─5b815179-5799-4544-81f7-37ff80bb1442
 # ╟─f7cec82a-4606-4463-8ce3-25db7683df02
-# ╟─41f3ff09-cd17-4691-bd7a-dce52f1a7e97
+# ╟─ead8619e-2c7c-4f06-9657-4cb5a0d5607e
+# ╟─1dab0806-50b2-4513-a999-3acca92330de
+# ╠═41f3ff09-cd17-4691-bd7a-dce52f1a7e97
 # ╠═c1570e2e-e7c7-4cce-80a4-bd0c7efaa0c2
 # ╟─c8446c65-9992-40e9-be38-7fb6ec9b0f62
 # ╟─55e52182-cbc1-4af3-9141-c02580e77195
@@ -2805,11 +2923,10 @@ version = "1.13.0+0"
 # ╠═daa9e2bf-a1eb-4628-a974-024c7a0d61a6
 # ╟─7891b7da-ba36-417d-bdde-c84187463636
 # ╟─1de0d073-bc11-4e4f-832c-f3b0e01b58f7
-# ╟─2474940b-0b25-44fe-995e-7e6e1dc94536
 # ╠═e8dafe17-c065-426c-a928-dcec43e962b0
 # ╟─2ea23935-697b-46be-886c-2f166475a590
-# ╟─e45490c6-59ea-4538-9aeb-25e1398a0e23
-# ╠═89277803-a204-4371-b475-8a8ff7233d60
+# ╠═e45490c6-59ea-4538-9aeb-25e1398a0e23
+# ╟─89277803-a204-4371-b475-8a8ff7233d60
 # ╟─0f4ecc8e-d314-4ed4-bc87-bc28b0dba078
 # ╠═7271061e-092f-4454-b90b-7d0d9295f815
 # ╟─7499fa65-cb31-45d1-aa43-d248dc1cd066
@@ -2822,7 +2939,15 @@ version = "1.13.0+0"
 # ╟─9a3027be-a9d9-47b6-81c3-2f2ea23776b7
 # ╟─4af8a93f-8a2a-4531-8c54-495bf97b1f4f
 # ╠═b78217cf-652a-403c-bb65-3721f963b95a
+# ╟─8f1481d4-c99c-487b-8f60-6423b1a252f3
+# ╟─fb70d223-dfac-45ca-8356-c7ef5283b13f
+# ╟─2f86d255-2f7c-44c2-ba96-897fe408e73b
 # ╟─84865a4a-9752-44e4-9746-41674be387c7
+# ╟─94e089d0-ea7c-4543-9aff-581e0d5160ab
+# ╟─eccc647d-5e1e-49a6-beb4-d3181e356baf
+# ╟─f1a00556-22a5-4e4a-9962-0744ffe6e747
+# ╟─018bb089-fb02-4b2b-a40d-a478669b2d71
+# ╟─2474940b-0b25-44fe-995e-7e6e1dc94536
 # ╟─2c658919-9be3-43f5-934b-9dd11a415eec
 # ╟─8e1bcfe0-e9c8-40b2-a671-f0795d4c4b52
 # ╟─00000000-0000-0000-0000-000000000001
