@@ -11,7 +11,7 @@ The linearized multilayer primitive equations in the Eady configuration can be s
 - [Pluto.jl](https://plutojl.org/) package (version 0.20.6)
 - several other Julia packages downloaded in the notebooks
 
-### Installation and 
+### Installation
 1. (*Only necessary once!*) __Install Julia__. It is recommended to use the cross-platform installer [juliaup](https://github.com/JuliaLang/juliaup) and follow the instructions in the [README](https://github.com/JuliaLang/juliaup/blob/main/README.md). In order to reproduce the same results please install the Julia version 1.11.5. Using `juliaup` this is down by running the following command in your terminal: ```juliaup add 1.11.5```.
 2. __Run Julia__. If you used `juliaup` for the installation you can run the correct version by executing `julia +1.11.5` in your terminal.
 3. (*Only necessary once!*) __Install Pluto__. 
