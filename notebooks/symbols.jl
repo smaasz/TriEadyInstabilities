@@ -763,8 +763,14 @@ html"""<hr>"""
 # ╔═╡ 94e089d0-ea7c-4543-9aff-581e0d5160ab
 function selectschemes(grid_t, scheme)
 	PlutoUI.combine() do Child
-		md""" $grid_t: $scheme: $(
-		Child("doshow", CheckBox(default=false))
+
+		descr = @sprintf("%-15s", "`" * string(grid_t) * ":" * string(scheme) * "`")
+		descr = replace(descr, " " => "_")
+		descr = Markdown.parse("$descr")
+		descr =  descr.content[1].content
+		
+		md""" $(descr): $(
+		Child("doshow", CheckBox(default=true))
 		) linestyle: $(
 		Child("ls", PlutoUI.Select([:solid, :dash, :dot]))
 		)"""
@@ -946,61 +952,6 @@ let
 	fs = displayfs(fsymbols[:D], :scalar, :vector; grid_t)
 end
 
-# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
-symbols = let
-	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
-	for gt in [:TriA, :TriB, :TriC, :HexC]
-		for hmt_scheme in first.(hmt_schemes[gt])
-			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
-			s  = downloadsymbols(config)
-			z   = 0.0
-			f₀  = -1e-4
-			g   = 1e9
-			N²  = 1e-6
-			Ri  = sRi
-			θU  = sθU
-			β   = sβ
-			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
-			ss = evalsymbols(s, params...)
-			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
-		end
-	end
-	symbols
-end;
-
-# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
-let
-	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
-	
-	fontfam = "DejaVu Sans"
-	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
-	
-	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
-	title!("Dispersion of Momentum Advection Operators")
-	ylabel!(L"ω / i\bar{U}K")
-	xlabel!(L"K/h^{-1}")
-	
-	for row in eachrow(symbols)
-		(; symbol, color, grid_t, hmt_scheme) = row
-		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
-		if doshow
-			fs = simplify.(symbol; expand=true)
-			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
-			b = zeros(ComplexF64, size(fs)...)
-			iωs = []
-			K̃s = 0:0.001:π
-			for K̃ in K̃s
-				ffs[2](b, K̃)
-				push!(iωs, eigvals(b, sortby=x->imag(x)))
-			end
-			iωss = transpose(stack(iωs))
-			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
-			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
-		end
-	end
-	p
-end
-
 # ╔═╡ 89277803-a204-4371-b475-8a8ff7233d60
 function plotinstabilities(df, Ri, grid_t, hmt_scheme; Nz, θU, β, a, Vᵘ, Vᵇ, hst_scheme, scatterpts=nothing)
 	size   = Ri > 1 ? (1400, 610) : (1400, 610)
@@ -1122,7 +1073,7 @@ S̲ = let
 	Vᵇ  = -sV
 	H   = 4000
 	Nz  = sNz
-	θ = (Ri > 1 ? 0 : π/2) + θU
+	θ   = (Ri > 1 ? 0 : π/2) + θU
 	k   = sK * cos(θ)
 	l   = sK * sin(θ)
 	systemmat(Val(grid_t), fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme=:biharmonic)
@@ -1138,6 +1089,66 @@ end
 WideCell(
 	plotinstabilities(ddf, sRi, grid_t, hmt_scheme; Nz=sNz, θU=sθU, β=sβ, a=sa, Vᵘ=sV, Vᵇ=sV, hst_scheme=shst_scheme, scatterpts=([sK], [mgr]))
 )
+
+# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
+# ╠═╡ disabled = true
+#=╠═╡
+symbols = let
+	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
+	for gt in [:TriA, :TriB, :TriC, :HexC]
+		for hmt_scheme in first.(hmt_schemes[gt])
+			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
+			s  = downloadsymbols(config)
+			z   = 0.0
+			f₀  = -1e-4
+			g   = 1e9
+			N²  = 1e-6
+			Ri  = sRi
+			θU  = sθU
+			β   = sβ
+			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
+			ss = evalsymbols(s, params...)
+			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
+		end
+	end
+	symbols
+end;
+  ╠═╡ =#
+
+# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
+#=╠═╡
+let
+	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
+	
+	fontfam = "DejaVu Sans"
+	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
+	
+	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
+	title!("Dispersion of Momentum Advection Operators")
+	ylabel!(L"ω / i\bar{U}K")
+	xlabel!(L"K/h^{-1}")
+	
+	for row in eachrow(symbols)
+		(; symbol, color, grid_t, hmt_scheme) = row
+		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
+		if doshow
+			fs = simplify.(symbol; expand=true)
+			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
+			b = zeros(ComplexF64, size(fs)...)
+			iωs = []
+			K̃s = 0:0.001:π
+			for K̃ in K̃s
+				ffs[2](b, K̃)
+				push!(iωs, eigvals(b, sortby=x->imag(x)))
+			end
+			iωss = transpose(stack(iωs))
+			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
+			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
+		end
+	end
+	p
+end
+  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2914,7 +2925,7 @@ version = "1.13.0+0"
 # ╟─655ba582-8c5e-44eb-b711-6ec8369326a5
 # ╟─0b6025ec-0e21-4a6a-a604-6aa98eef2350
 # ╟─d75cbf05-6c02-4622-93d5-9231231cdb3c
-# ╠═38313589-8fda-4c9e-bcf5-7ce2b24360a4
+# ╟─38313589-8fda-4c9e-bcf5-7ce2b24360a4
 # ╟─7c38c4dc-2711-48f7-a31f-14b972b0e447
 # ╟─1540c9d9-25ac-48d6-9c2c-fe7650d1b872
 # ╟─dfc6fcc3-7357-4e5e-9061-f2571934d2d2
@@ -2940,7 +2951,7 @@ version = "1.13.0+0"
 # ╟─4af8a93f-8a2a-4531-8c54-495bf97b1f4f
 # ╠═b78217cf-652a-403c-bb65-3721f963b95a
 # ╟─8f1481d4-c99c-487b-8f60-6423b1a252f3
-# ╟─fb70d223-dfac-45ca-8356-c7ef5283b13f
+# ╠═fb70d223-dfac-45ca-8356-c7ef5283b13f
 # ╟─2f86d255-2f7c-44c2-ba96-897fe408e73b
 # ╟─84865a4a-9752-44e4-9746-41674be387c7
 # ╟─94e089d0-ea7c-4543-9aff-581e0d5160ab
