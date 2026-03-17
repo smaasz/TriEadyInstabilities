@@ -26,7 +26,7 @@ begin
 	using HypertextLiteral: @htl, @html_str
 	using LaTeXStrings
 	import Latexify
-	import LinearAlgebra: eigvals, kron!, I, Diagonal
+	import LinearAlgebra: eigvals, kron!, I, Diagonal, eigvecs
 	import NaNMath
 	using Plots
 	using PlutoUI
@@ -100,9 +100,11 @@ function nlattices(colpt)
 end
 
 # ╔═╡ 0c4d6003-d3b1-4fdf-acc4-b5348b606825
-md"""
-$(Resource("https://github.com/smaasz/InstabilityOnGrids/blob/main/plots/hexlattices.jpeg?raw=true", :height=>500))
-"""
+let
+	md"""
+	$(Resource("https://github.com/smaasz/InstabilityOnGrids/blob/main/plots/hexlattices.jpeg?raw=true", :height=>500))
+	"""
+end
 
 # ╔═╡ 6054481d-0bba-40c7-baef-c72cfe02e632
 md"""
@@ -671,6 +673,97 @@ function systemmat(grid_t::Union{Val{:TriA}, Val{:TriB}}, fsyms, b, k, l; g, f�
     S̲
 end
 
+# ╔═╡ ae7e3c84-1b86-40a3-b7c8-47faef1c65e7
+function systemmatalt(grid_t::Union{Val{:TriA}, Val{:TriB}}, fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme, useidealized=Dict(), vfops=vertical_ops())
+    Δz  = H / Nz
+    h   = a * √3/2
+    
+    # conversion to dissipation parameters
+    if dissip_scheme == :biharmonic
+		𝕂ᵘ = Vᵘ * a^3
+		𝕂ᵇ = Vᵇ * a^3
+    else
+		𝕂ᵘ = Vᵘ * a
+		𝕂ᵇ = Vᵇ * a
+    end
+
+    # compute fourier symbols
+    for (name, fsym) in pairs(fsyms)
+        useideal = get(useidealized, name, false)
+	fsym[2](b[name], 0.0, f₀, N², Ri, θU, β, k, l, useideal ? 1e-20 : a, useideal ? √3/2*1e-20 : h)
+    end
+    
+    # vertical operators
+    @unpack Ūf, Uf, Vf, Uzf, Vzf, Bxf, Byf = vfops
+    Ū̲ = Diagonal([Ūf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    U̲ = Diagonal([Uf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    V̲ = Diagonal([Vf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    U̲⃗ = (U̲, V̲)
+    U̲z = Diagonal([Uzf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    V̲z = Diagonal([Vzf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    U̲⃗z = (U̲z, V̲z)
+    B̲x = Diagonal([Bxf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    B̲y = Diagonal([Byf(((iV-1/2)-Nz) * Δz, f₀, N², Ri, θU, β, H) for iV=1:Nz])
+    B̲⃗ = (B̲x, B̲y)
+    
+    W̲ = let
+		M = Δz * 1/2 * [iV ≤ iVi ≤ iV+1 for iV=1:Nz, iVi=1:Nz+1] * [iV < iVi ? 1 : 0 for iVi=1:Nz+1, iV=1:Nz]
+		[kron(-b[:D][:,jTH,:], M) for jTH=1:2]
+    end
+    
+    P̲ = let
+	M = Δz * 1/2 * [iV ≤ iVi ? 1 : 0 for iV=1:Nz, iVi=1:Nz-1] * [iVi ≤ iV ≤ iVi+1 for iVi=1:Nz-1, iV=1:Nz]
+		kron(I(db), -M)
+    end
+
+    # assembling	
+    S̲ = zeros(ComplexF64, (2*du+db)*Nz+db, (2*du+db)*Nz+db)
+
+    ru⃗ = [(iTH-1)*du*Nz+1:iTH*du*Nz for iTH=1:2]
+    rb = 2*du*Nz+1:(2*du+db)*Nz
+    rη = (2*du+db)*Nz+1:(2*du+db)*Nz+db
+    
+    # U⃗
+    @views for iTH = 1:2
+	for jTH = 1:2
+            C = S̲[ru⃗[iTH], ru⃗[jTH]]
+            useideal = get(useidealized, :Gx, false)
+            for iV in 1:Nz
+                zi = ((iV-1/2)-Nz) * Δz
+                C[iV:Nz:end, iV:Nz:end] .+= fsyms[:Gx][1](zi, f₀, N², Ri, θU, β, k, l, useideal ? 1e-20 : a, useideal ? √3/2*1e-20 : h)[iTH, :, jTH, :] * Ūf(zi, f₀, N², Ri, θU, β, H)
+            end
+	    S̲[ru⃗[iTH], ru⃗[jTH]] += kron(b[:A⁽ˣ⁾][iTH,:,:], U̲z) * W̲[jTH]
+	    S̲[ru⃗[iTH], ru⃗[jTH]] += kron(b[:A⁽ʸ⁾][iTH,:,:], V̲z) * W̲[jTH]
+	    S̲[ru⃗[iTH], ru⃗[jTH]] += f₀ * kron(b[:M][iTH,:,jTH,:], I(Nz))
+	    S̲[ru⃗[iTH], ru⃗[jTH]] += 𝕂ᵘ * kron(b[:Dᵘ][iTH,:,jTH,:], I(Nz))
+	end
+
+	kron!(S̲[ru⃗[iTH], rb], b[:G][iTH,:,:], I(Nz))
+	S̲[ru⃗[iTH], rb] *= P̲
+
+	kron!(S̲[ru⃗[iTH], rη], b[:G][iTH,:,:], g*ones(Nz,1))
+    end
+
+    # b
+    @views for jTH = 1:2
+		S̲[rb, ru⃗[jTH]] += N² * kron(b[:I], I(Nz)) * W̲[jTH]
+		S̲[rb, ru⃗[jTH]] += kron(b[:Av⁽ˣ⁾][:,jTH,:], B̲x)
+		S̲[rb, ru⃗[jTH]] += kron(b[:Av⁽ʸ⁾][:,jTH,:], B̲y)
+    end
+    @views kron!(S̲[rb, rb], b[:Γx], U̲)
+    @views S̲[rb, rb] += kron(b[:Γy], V̲)
+    @views S̲[rb, rb] += 𝕂ᵇ * kron(b[:Dᵇ], I(Nz))
+
+    # η
+    @views for jTH = 1:2
+		kron!(S̲[rη, ru⃗[jTH]], b[:D][:,jTH,:], Δz*ones(1,Nz))
+    end
+
+    S̲[rη, rη] .= U̲[end] * b[:Γx] + V̲[end] * b[:Γy]
+    
+    S̲
+end
+
 # ╔═╡ 22ad33e5-0641-40aa-9aec-fc4e9be6b4b8
 function systemmat(grid_t::Union{Val{:TriC}, Val{:HexC}}, fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme, useidealized=Dict(), vfops=vertical_ops())
     Δz  = H / Nz
@@ -754,8 +847,73 @@ function systemmat(grid_t::Union{Val{:TriC}, Val{:HexC}}, fsyms, b, k, l; g, f�
 end
 
 
+# ╔═╡ b1a37bcb-78fd-48a7-b9bc-5bb59f0524fa
+md"""
+__Eigenvector__: $(@bind sindex PlutoUI.Slider(0:10; show_value=true))
+"""
+
 # ╔═╡ 8f1481d4-c99c-487b-8f60-6423b1a252f3
 md"## Dispersion Relations"
+
+# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
+# ╠═╡ disabled = true
+#=╠═╡
+symbols = let
+	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
+	for gt in [:TriA, :TriB, :TriC, :HexC]
+		for hmt_scheme in first.(hmt_schemes[gt])
+			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
+			s  = downloadsymbols(config)
+			z   = 0.0
+			f₀  = -1e-4
+			g   = 1e9
+			N²  = 1e-6
+			Ri  = sRi
+			θU  = sθU
+			β   = sβ
+			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
+			ss = evalsymbols(s, params...)
+			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
+		end
+	end
+	symbols
+end;
+  ╠═╡ =#
+
+# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
+#=╠═╡
+let
+	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
+	
+	fontfam = "DejaVu Sans"
+	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
+	
+	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
+	title!("Dispersion of Momentum Advection Operators")
+	ylabel!(L"ω / i\bar{U}K")
+	xlabel!(L"K/h^{-1}")
+	
+	for row in eachrow(symbols)
+		(; symbol, color, grid_t, hmt_scheme) = row
+		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
+		if doshow
+			fs = simplify.(symbol; expand=true)
+			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
+			b = zeros(ComplexF64, size(fs)...)
+			iωs = []
+			K̃s = 0:0.001:π
+			for K̃ in K̃s
+				ffs[2](b, K̃)
+				push!(iωs, eigvals(b, sortby=x->imag(x)))
+			end
+			iωss = transpose(stack(iωs))
+			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
+			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
+		end
+	end
+	p
+end
+  ╠═╡ =#
 
 # ╔═╡ 84865a4a-9752-44e4-9746-41674be387c7
 html"""<hr>"""
@@ -854,7 +1012,7 @@ begin
 end;
 
 # ╔═╡ 018bb089-fb02-4b2b-a40d-a478669b2d71
-floataside(@bind selectedschemes selectschemes(); top=100)
+floataside(@bind selectedschemes selectschemes(); top=50)
 
 # ╔═╡ 2474940b-0b25-44fe-995e-7e6e1dc94536
 begin
@@ -872,7 +1030,7 @@ Richardson number Ri: $(@bind sRi Select([100.0, 0.5]; default=100//1))
 horiz. scalar transport scheme: $(@bind shst_scheme Select([:low => "low-order accurate", :high => "high-order accurate"]))
 
 Biharmonic friction V (in m/s): $(@bind sV PlutoUI.Slider([0, 1e-3, 1e-2]; show_value=true))
-""", top=340)
+""", top=280)
 end
 
 # ╔═╡ 41f3ff09-cd17-4691-bd7a-dce52f1a7e97
@@ -1018,14 +1176,14 @@ function plotinstabilities(df, Ri; Nz, θU, β, a, Vᵘ, Vᵇ, hst_scheme)
 	limits = Ri > 1 ? (0.0, 1.01, -0.02, 0.38) : (0.0, 1.01, -0.1, 1.0)
 
 
-	fontfam = "DejaVu Sans"
+	fontfam = "computer modern"
 	default(legendfontsize=16, guidefont=(20, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
 
 	p = plot()
 
 	title!("Max. Growth Rate on " * (Ri > 1 ? "Baroclinic" : "Symmetric") * " Axis")
-	xlabel!("wavenumber / kₛ")
-	ylabel!("growth rate / N M⁻²")
+	xlabel!(L"\mathrm{wavenumber}~/~k_s")
+	ylabel!(L"\mathrm{growth~rate}~/~N M^{-2}")
 	xlims!(limits[1:2])
 	ylims!(limits[3:4])
 	xticks!(xticks)
@@ -1069,19 +1227,23 @@ S̲ = let
 	Ri  = sRi
 	θU  = sθU
 	β   = sβ
-	Vᵘ  = -sV
-	Vᵇ  = -sV
+	Vᵘ  = sV
+	Vᵇ  = sV
 	H   = 4000
 	Nz  = sNz
 	θ   = (Ri > 1 ? 0 : π/2) + θU
 	k   = sK * cos(θ)
 	l   = sK * sin(θ)
-	systemmat(Val(grid_t), fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme=:biharmonic)
+	if hmt_scheme == :fdcre
+		systemmatalt(Val(grid_t), fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme=:biharmonic)
+	else
+		systemmat(Val(grid_t), fsyms, b, k, l; g, f₀, N², H, Nz, Ri, θU, β, a, Vᵘ, Vᵇ, dissip_scheme=:biharmonic)
+	end
 end
 
 # ╔═╡ 9a3027be-a9d9-47b6-81c3-2f2ea23776b7
 begin
-	mgr = real(eigvals(S̲)[end])
+	mgr = real(eigvals(-S̲)[end])
 	md"""__Max. growth rate__: $(@sprintf("%2.4e", mgr))"""
 end
 
@@ -1090,65 +1252,79 @@ WideCell(
 	plotinstabilities(ddf, sRi, grid_t, hmt_scheme; Nz=sNz, θU=sθU, β=sβ, a=sa, Vᵘ=sV, Vᵇ=sV, hst_scheme=shst_scheme, scatterpts=([sK], [mgr]))
 )
 
-# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
-# ╠═╡ disabled = true
-#=╠═╡
-symbols = let
-	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
-	for gt in [:TriA, :TriB, :TriC, :HexC]
-		for hmt_scheme in first.(hmt_schemes[gt])
-			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
-			s  = downloadsymbols(config)
-			z   = 0.0
-			f₀  = -1e-4
-			g   = 1e9
-			N²  = 1e-6
-			Ri  = sRi
-			θU  = sθU
-			β   = sβ
-			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
-			ss = evalsymbols(s, params...)
-			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
-		end
-	end
-	symbols
-end;
-  ╠═╡ =#
-
-# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
-#=╠═╡
+# ╔═╡ fc378ff8-a31d-43d2-b33f-b96b09dd5996
 let
-	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
-	
-	fontfam = "DejaVu Sans"
-	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
-	
-	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
-	title!("Dispersion of Momentum Advection Operators")
-	ylabel!(L"ω / i\bar{U}K")
-	xlabel!(L"K/h^{-1}")
-	
-	for row in eachrow(symbols)
-		(; symbol, color, grid_t, hmt_scheme) = row
-		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
-		if doshow
-			fs = simplify.(symbol; expand=true)
-			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
-			b = zeros(ComplexF64, size(fs)...)
-			iωs = []
-			K̃s = 0:0.001:π
-			for K̃ in K̃s
-				ffs[2](b, K̃)
-				push!(iωs, eigvals(b, sortby=x->imag(x)))
-			end
-			iωss = transpose(stack(iωs))
-			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
-			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
-		end
+	# eigenvectors
+	ev = eigvecs(-S̲)
+
+	Nz = sNz
+	Ri = sRi
+	H  = 4000
+
+	# projection onto subspaces
+	u, v, b, η = if grid_t == :TriC || grid_t == :HexC
+		ru⃗, rb, rη = (1:du*Nz, du*Nz+1:(du+db)*Nz, (du+db)*Nz+1:(du+db)*Nz+db)
+
+		(reshape(ev[ru⃗, :], Nz, du, :),
+		 reshape(ev[ru⃗, :], Nz, du, :),
+		 reshape(ev[rb, :], Nz, db, :),
+		 ev[rη, :]
+		)
+	else
+		ru⃗, rb, rη = ([(iTH-1)*du*Nz+1:iTH*du*Nz for iTH=1:2], 
+		 2*du*Nz+1:(2*du+db)*Nz,
+		 (2*du+db)*Nz+1:(2*du+db)*Nz+db)
+
+		(reshape(ev[ru⃗[1], :], Nz, du, :),
+		 reshape(ev[ru⃗[2], :], Nz, du, :),
+		 reshape(ev[rb, :], Nz, db, :),
+		 ev[rη, :]
+		)
 	end
-	p
+
+	# plotting
+	amps = [(u[:,:, :], L"\hat{u}", L"ms^{-1}"), (b[:,:, :], L"\hat{b}", L"ms^{-2}")]
+	
+	Δz = H / Nz
+	zs = ((collect(1:Nz) .- 1/2) .- Nz) * Δz
+
+	plotsize   = (800, 600)
+	#aspect = 
+	#limits = 
+
+
+	fontfam = "computer modern"
+	default(legendfontsize=16, guidefont=(20, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
+
+	ps = [plot() for i in 1:length(amps)]
+
+	isfirst = true
+	yts = nothing
+	for (p, (profile, label, units)) in zip(ps, amps)
+		title!(p, L"%$label")
+		xlabel!(p, L"%$label / %$units")
+
+		i = argmax(maximum(abs.(profile[:,:,end]), dims=1))[2]
+		
+		xs = profile[:, i, end-sindex]
+		xlim = maximum(vcat(abs.(real.(xs)), abs.(imag.(xs)))) * 1.2
+		xlims!(p, (-xlim, xlim))
+
+		plot!(p, real.(xs), zs, label="real", linewidth=4, linecolor=:blue)
+		plot!(p, imag.(xs), zs, label="imag", linewidth=4, linecolor=:red)
+
+		xticks!(p, optimize_ticks(-xlim, xlim; k_min = 3, k_max = 3)[1])
+		if isfirst
+			ylabel!(p, L"z~/~m")
+			yts = yticks(p)[1]
+		else
+			yticks!(p, (yts[1], String[]))
+		end
+		isfirst = false
+	end
+	p = plot(ps..., layout=(1, length(amps)), legend=false, size=plotsize)
+	#plot!(p, legend=:outertopright, legendcolumns=2)
 end
-  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2937,19 +3113,22 @@ version = "1.13.0+0"
 # ╠═e8dafe17-c065-426c-a928-dcec43e962b0
 # ╟─2ea23935-697b-46be-886c-2f166475a590
 # ╠═e45490c6-59ea-4538-9aeb-25e1398a0e23
-# ╟─89277803-a204-4371-b475-8a8ff7233d60
-# ╟─0f4ecc8e-d314-4ed4-bc87-bc28b0dba078
-# ╠═7271061e-092f-4454-b90b-7d0d9295f815
+# ╠═89277803-a204-4371-b475-8a8ff7233d60
+# ╠═0f4ecc8e-d314-4ed4-bc87-bc28b0dba078
+# ╟─7271061e-092f-4454-b90b-7d0d9295f815
 # ╟─7499fa65-cb31-45d1-aa43-d248dc1cd066
 # ╠═5fde0451-f79c-472e-a431-52b72eb2b703
 # ╟─02be2a80-0fa3-42bd-ba7b-e0a9ec893c3c
 # ╠═13394a42-764d-44d4-a730-66c5109647ef
 # ╠═b05f634b-56a8-49c7-8a2b-d410d72582fe
-# ╠═22ad33e5-0641-40aa-9aec-fc4e9be6b4b8
+# ╟─ae7e3c84-1b86-40a3-b7c8-47faef1c65e7
+# ╟─22ad33e5-0641-40aa-9aec-fc4e9be6b4b8
 # ╠═b240a2e2-f574-4275-b471-2313428b18eb
+# ╠═b78217cf-652a-403c-bb65-3721f963b95a
 # ╟─9a3027be-a9d9-47b6-81c3-2f2ea23776b7
 # ╟─4af8a93f-8a2a-4531-8c54-495bf97b1f4f
-# ╠═b78217cf-652a-403c-bb65-3721f963b95a
+# ╟─fc378ff8-a31d-43d2-b33f-b96b09dd5996
+# ╟─b1a37bcb-78fd-48a7-b9bc-5bb59f0524fa
 # ╟─8f1481d4-c99c-487b-8f60-6423b1a252f3
 # ╠═fb70d223-dfac-45ca-8356-c7ef5283b13f
 # ╟─2f86d255-2f7c-44c2-ba96-897fe408e73b
@@ -2957,7 +3136,7 @@ version = "1.13.0+0"
 # ╟─94e089d0-ea7c-4543-9aff-581e0d5160ab
 # ╟─eccc647d-5e1e-49a6-beb4-d3181e356baf
 # ╟─f1a00556-22a5-4e4a-9962-0744ffe6e747
-# ╟─018bb089-fb02-4b2b-a40d-a478669b2d71
+# ╠═018bb089-fb02-4b2b-a40d-a478669b2d71
 # ╟─2474940b-0b25-44fe-995e-7e6e1dc94536
 # ╟─2c658919-9be3-43f5-934b-9dd11a415eec
 # ╟─8e1bcfe0-e9c8-40b2-a671-f0795d4c4b52
