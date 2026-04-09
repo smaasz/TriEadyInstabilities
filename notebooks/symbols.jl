@@ -855,66 +855,6 @@ __Eigenvector__: $(@bind sindex PlutoUI.Slider(0:10; show_value=true))
 # ╔═╡ 8f1481d4-c99c-487b-8f60-6423b1a252f3
 md"## Dispersion Relations"
 
-# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
-# ╠═╡ disabled = true
-#=╠═╡
-symbols = let
-	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
-	for gt in [:TriA, :TriB, :TriC, :HexC]
-		for hmt_scheme in first.(hmt_schemes[gt])
-			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
-			s  = downloadsymbols(config)
-			z   = 0.0
-			f₀  = -1e-4
-			g   = 1e9
-			N²  = 1e-6
-			Ri  = sRi
-			θU  = sθU
-			β   = sβ
-			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
-			ss = evalsymbols(s, params...)
-			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
-		end
-	end
-	symbols
-end;
-  ╠═╡ =#
-
-# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
-#=╠═╡
-let
-	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
-	
-	fontfam = "DejaVu Sans"
-	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
-	
-	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
-	title!("Dispersion of Momentum Advection Operators")
-	ylabel!(L"ω / i\bar{U}K")
-	xlabel!(L"K/h^{-1}")
-	
-	for row in eachrow(symbols)
-		(; symbol, color, grid_t, hmt_scheme) = row
-		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
-		if doshow
-			fs = simplify.(symbol; expand=true)
-			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
-			b = zeros(ComplexF64, size(fs)...)
-			iωs = []
-			K̃s = 0:0.001:π
-			for K̃ in K̃s
-				ffs[2](b, K̃)
-				push!(iωs, eigvals(b, sortby=x->imag(x)))
-			end
-			iωss = transpose(stack(iωs))
-			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
-			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
-		end
-	end
-	p
-end
-  ╠═╡ =#
-
 # ╔═╡ 84865a4a-9752-44e4-9746-41674be387c7
 html"""<hr>"""
 
@@ -1324,6 +1264,61 @@ let
 	end
 	p = plot(ps..., layout=(1, length(amps)), legend=false, size=plotsize)
 	#plot!(p, legend=:outertopright, legendcolumns=2)
+end
+
+# ╔═╡ fb70d223-dfac-45ca-8356-c7ef5283b13f
+symbols = let
+	symbols = DataFrame(grid_t=String[], hmt_scheme=String[], symbol=Array{Complex{Num}}[])
+	for gt in [:TriA, :TriB, :TriC, :HexC]
+		for hmt_scheme in first.(hmt_schemes[gt])
+			config = @dict(grid_t=gt, hmt_scheme, hst_scheme=:low, dissip_scheme=:biharmonic)
+			s  = downloadsymbols(config)
+			z   = 0.0
+			f₀  = -1e-4
+			g   = 1e9
+			N²  = 1e-6
+			Ri  = sRi
+			θU  = sθU
+			β   = sβ
+			params = (z, f₀, N², Ri, θU, β, K̃ * cos(θU), K̃ * sin(θU), 2/√3, 1.0)
+			ss = evalsymbols(s, params...)
+			push!(symbols, (string(gt), string(hmt_scheme), cos(sθU) * displayfs(ss[:Gx], :vector, :vector; grid_t=gt) + sin(sθU) * displayfs(ss[:Gy], :vector, :vector; grid_t=gt)))
+		end
+	end
+	symbols
+end;
+
+# ╔═╡ 2f86d255-2f7c-44c2-ba96-897fe408e73b
+let
+	symbols = innerjoin(symbols, colordf; on=[:grid_t, :hmt_scheme])
+	
+	fontfam = "DejaVu Sans"
+	default(legendfontsize=16, guidefont=(26, fontfam, :black), tickfont=(16, fontfam, :black), framestyle = :box, legendfont=(16, fontfam), titlefont=(24, fontfam))
+	
+	p = plot(; size=(1000, 700), legend=:outerbottom, legendcolumn=4, leftmargin=Plots.AbsoluteLength(10.0), bottommargin=Plots.AbsoluteLength(-10.0))
+	title!("Dispersion of Momentum Advection Operators")
+	ylabel!(L"ω / i\bar{U}K")
+	xlabel!(L"K/h^{-1}")
+	
+	for row in eachrow(symbols)
+		(; symbol, color, grid_t, hmt_scheme) = row
+		(; doshow, ls) = getproperty(getproperty(selectedschemes, Symbol(grid_t)), Symbol(hmt_scheme))
+		if doshow
+			fs = simplify.(symbol; expand=true)
+			ffs = Symbolics.build_function(fs, K̃; expression=Val(false))
+			b = zeros(ComplexF64, size(fs)...)
+			iωs = []
+			K̃s = 0:0.001:π
+			for K̃ in K̃s
+				ffs[2](b, K̃)
+				push!(iωs, eigvals(b, sortby=x->imag(x)))
+			end
+			iωss = transpose(stack(iωs))
+			label = hcat("$grid_t:$hmt_scheme", fill("", size(iωss, 1)-1)...)
+			plot!(K̃s, imag.(iωss) ./ K̃s; color, label, linewidth=4, linestyle= ls)
+		end
+	end
+	p
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -3127,11 +3122,11 @@ version = "1.13.0+0"
 # ╠═b78217cf-652a-403c-bb65-3721f963b95a
 # ╟─9a3027be-a9d9-47b6-81c3-2f2ea23776b7
 # ╟─4af8a93f-8a2a-4531-8c54-495bf97b1f4f
-# ╟─fc378ff8-a31d-43d2-b33f-b96b09dd5996
+# ╠═fc378ff8-a31d-43d2-b33f-b96b09dd5996
 # ╟─b1a37bcb-78fd-48a7-b9bc-5bb59f0524fa
 # ╟─8f1481d4-c99c-487b-8f60-6423b1a252f3
 # ╠═fb70d223-dfac-45ca-8356-c7ef5283b13f
-# ╟─2f86d255-2f7c-44c2-ba96-897fe408e73b
+# ╠═2f86d255-2f7c-44c2-ba96-897fe408e73b
 # ╟─84865a4a-9752-44e4-9746-41674be387c7
 # ╟─94e089d0-ea7c-4543-9aff-581e0d5160ab
 # ╟─eccc647d-5e1e-49a6-beb4-d3181e356baf
